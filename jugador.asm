@@ -48,6 +48,8 @@ ini_columna 	equ 	lim_derecho/2
 ini_renglon 	equ 	22
 
 ;/////variables/////////
+pos_x			db 		"Posicion x"
+pos_y			db 		"Posicion y"
 conta 			db 		0
 tick_ms			dw 		55 		;55 ms por cada tick del sistema, esta variable se usa para operación de MUL convertir ticks a segundos
 mil				dw		1000 	;1000 auxiliar para operación DIV entre 1000
@@ -66,16 +68,19 @@ ren_aux         db      0
 bola_col		db 		ini_columna 	 	;columna de la bola
 bola_ren		db 		ini_renglon-1 		;renglón de la bola
 bola_pend 		db 		1 		;pendiente de desplazamiento de la bola
-bola_rap 		dw 		2 		;rapidez de la bola
-bola_dir		db 		1 		;dirección de la bola. 0 izquierda-abajo, 1 derecha-abajo, 2 izquierda-arriba, 3 derecha-arriba
+bola_rap 		dw 		1		;rapidez de la bola ////modificada a 1, el original es 2
+bola_dir		db 		0 		;dirección de la bola. 0 izquierda-abajo, 1 derecha-abajo, 2 izquierda-arriba, 3 derecha-arriba
+bola_dir_x		db		2		;dirección en x de la bola 
+bola_dir_y		db		1		;dirección en y de la bola
+
 
 ;variables nuevas para las funciones agregadas
 toco_lim_izq 	db 		0
 toco_lim_der	db 		0
 end_game 		db 		0
-delay_ticks		dw 		55		;~ 3 segundos (18.2 ticks/sec 3 ≈ 55 ticks)
-;variables para las colisiones de la bola
-col_bola 		db 		0		;limite con el que colisiono. 0 lim sup, 1 lim der, 2 lim inf, 3 lim izq
+delay_ticks		dw 		3
+aux_mul			dw		0
+
 
 
 ;////////macros//////
@@ -130,27 +135,23 @@ imprime_caracter_color macro caracter,color,bg_color
 	int 10h 				;int 10h, AH=09h, imprime el caracter en AL con el color BL
 endm
 
+imprime_cadena_color macro cadena,long_cadena,color,bg_color
+	mov ah,13h				;preparar AH para interrupcion, opcion 13h
+	lea bp,cadena 			;BP como apuntador a la cadena a imprimir
+	mov bh,0				;BH = numero de pagina
+	mov bl,color 			
+	or bl,bg_color 			;BL = color del caracter
+							;'color' define los 4 bits menos significativos 
+							;'bg_color' define los 4 bits más significativos 
+	mov cx,long_cadena		;CX = longitud de la cadena, se tomarán este número de localidades a partir del apuntador a la cadena
+	int 10h 				;int 10h, AH=09h, imprime el caracter en AL con el color BL
+endm
+
 ;//////////////////////////////
 ;////////MACROS AGREGADAS//////
 ;//////////////////////////////
-cambiar_direccion_bola macro direccion_bola, colision_bola
-		direccion_0:
-			cmp direccion_bola, 0
-			jne colision_inferior_der
-			cmp colision_bola, 2		;tocó limite inferior
-			jne colision_inferior_algo
-			;logica si la bola tenia direccion 0 y colisiono el limite inferior
-			call DIRECCION_BOLA_2
-			ret
-		colision_inferior_der:
-			cmp colision_bola, 2 	;tocó limite inferior 
-			jne colision_bola_inf
-			call DIRECCION_BOLA		;tenía direccion 2
-			
-	
 
 
-	endm
 
 
 
@@ -173,26 +174,21 @@ inicio:
 ;"ciclo" para que salga hasta que se presione la tecla esc
 jugar:
 	;verificamos la entrada del jugador
-	mov ah, 01h			;función hay tecla disponible
+	mov ah, 01h					;función hay tecla disponible
 	int 16h 
-	jz no_input			;si no hay tecla se mueve la bola
+	jnz tecla_presionada		;si hay tecla, procesamos esa entrada 
 
-	call MOVER_JUGADOR	
-	cmp end_game, 1		;comprobamos si se presionó la tecla esc
-	je salir			;si end_game == 1 => saltamos a la etiqueta salir
+mover_bola:
 	
-no_input:
-	; --- Control de tiempo para movimiento ---
-    mov ah, 00h
-    int 1Ah             ; CX:DX = ticks actuales
-    sub dx, [ticks]         ; DX = ticks transcurridos
-    cmp dx, [delay_ticks]
-    jb jugar       ; Si no ha pasado el tiempo, repetir
+	call MOVIMIENTO_BOLA 
+	jmp jugar	
 
-    ; --- Actualizar posición y tiempo ---
-    mov [ticks], dx ; Guardar nuevos ticks de referencia
-    call MOVER_BOLA_GEN   ; Mover el objeto
-	jmp jugar		
+tecla_presionada:
+	call MOVER_JUGADOR	
+	cmp end_game, 1				;comprobamos si se presionó la tecla esc
+	je salir					;si end_game == 1 => saltamos a la etiqueta salir
+	call MOVIMIENTO_BOLA 
+	jmp jugar
 
 salir: 
 	clear
@@ -201,6 +197,27 @@ salir:
 
 
 ;procedimientos
+
+PRINT_TEXT proc
+		posiciona_cursor [ren_aux], [col_aux]
+		imprime_cadena_color [pos_x], 9,cBlanco, bgNegro
+		inc[col_aux]
+
+		posiciona_cursor [ren_aux], [col_aux]
+		imprime_cadena_color [bola_dir_x], 4, cBlanco, bgNegro
+		inc[col_aux]
+		
+		posiciona_cursor [ren_aux], [col_aux]
+		imprime_cadena_color [pos_y], 9, cBlanco,bgNegro
+		inc[col_aux]
+
+		posiciona_cursor [ren_aux], [col_aux]
+		imprime_cadena_color [bola_dir_y], 4, cBlanco, bgNegro
+
+		
+	endp
+
+
 
 PRINT_PLAYER proc
 		posiciona_cursor [ren_aux],[col_aux]
@@ -380,72 +397,134 @@ COMP_LIM_JUGADOR_DER proc
 ;izquierda, por lo que el eje Y está invertido, si se quiere ir para
 ;arriba se deben restar números y al revés
 
-;La bola se mueve izquierda y abajo
-DIRECCION_BOLA_0 proc
-		call BORRA_BOLA
-		inc [bola_ren]
-		dec [bola_col]
-		call IMPRIME_BOLA
-		mov [bola_dir], 0
-		ret
-	endp
+MOVIMIENTO_BOLA proc
+    delay:
+        mov ah, 00h 
+        int 1Ah 
+        sub dx, [ticks]
+        cmp dx, [delay_ticks]
+        jb delay
 
-;La bola se mueve derecha y abajo
-DIRECCION_BOLA_1 proc
-		call BORRA_BOLA
-		inc [bola_ren]
-		inc [bola_col]
-		call IMPRIME_BOLA
-		mov [bola_dir], 1
-		ret
-	endp
+        call BORRA_BOLA
 
-;La bola se mueve izquierda y arriba
-DIRECCION_BOLA_2 proc
-		call BORRA_BOLA
-		dec [bola_ren]
-		dec [bola_col]
-		call IMPRIME_BOLA
-		mov [bola_dir], 2
-		ret
-	endp
+        ; Movimiento según dirección actual
+        cmp [bola_dir], 0   ; Izquierda abajo
+        je direccion_0
+        cmp [bola_dir], 1   ; Derecha abajo
+        je direccion_1
+        cmp [bola_dir], 2   ; Izquierda arriba
+        je direccion_2
+        cmp [bola_dir], 3   ; Derecha arriba
+        je direccion_3
 
-;La bola se mueve derecha y arriba
-DIRECCION_BOLA_3 proc
-		call BORRA_BOLA
-		dec [bola_ren]
-		inc [bola_col]
-		call IMPRIME_BOLA
-		mov [bola_dir], 3
-		ret
-	endp
+    direccion_0:
+        dec [bola_col]      ; Mover izquierda
+        inc [bola_ren]      ; Mover abajo
+        jmp comprobar_colision
 
-BOLA_COLISIONO proc
-		;comprobamos el limite superior
-		cmp [bola_ren], lim_superior + 1
-		je colision_superior
+    direccion_1:
+        inc [bola_col]      ; Mover derecha
+        inc [bola_ren]      ; Mover abajo
+        jmp comprobar_colision
 
-		;comprobamos el limite inferior
-		cmp [bola_ren], lim_inferior - 1
-		je colision_inferior
+    direccion_2:
+        dec [bola_col]      ; Mover izquierda
+        dec [bola_ren]      ; Mover arriba
+        jmp comprobar_colision
 
-		;comprobamos el limite izquierdo
-		cmp [bola_col], lim_izquierdo + 1
-		je colision_izquierda
+    direccion_3:
+        inc [bola_col]      ; Mover derecha
+        dec [bola_ren]      ; Mover arriba
 
-		;comprobamos el limite derecho
-		cmp [bola_col], lim_derecho - 1
-		je colision_derecha
+    comprobar_colision:
+        ; Verificar colisiones laterales primero
+        cmp [bola_col], lim_izquierdo
+        jle col_lat_izq
+        cmp [bola_col], lim_derecho
+        jge col_lat_der
 
-		;comprobamos que direccion tenia la bola para modificar su
-		;trayectoria
-		colision_superior:
-			cmp [bola_dir], 2		;si la bola tenia direccion arriba izquierda
-			je cambiar_direccion_bola
-			cmp [bola_dir], 3	;si la bola tenia direccion arriba derecha
+        ; Luego verificar colisiones verticales
+        cmp [bola_ren], lim_superior
+        jle col_superior
+        cmp [bola_ren], lim_inferior
+        jge col_inferior
+        jmp dibujar_bola     ; Si no hay colisiones
 
-		cambiar_direccion_bola:
+    col_lat_izq:
+        ; Cambiar dirección al rebotar en pared izquierda
+        cmp [bola_dir], 0    ; Si venía de izquierda-abajo
+        je cambiar_a_dir1    ; Cambiar a derecha-abajo
+        cmp [bola_dir], 2    ; Si venía de izquierda-arriba
+        je cambiar_a_dir3    ; Cambiar a derecha-arriba
+        jmp ajustar_posicion
 
-	endp
+    cambiar_a_dir1:
+        mov [bola_dir], 1
+        jmp ajustar_posicion
+
+    cambiar_a_dir3:
+        mov [bola_dir], 3
+        jmp ajustar_posicion
+
+    col_lat_der:
+        ; Cambiar dirección al rebotar en pared derecha
+        cmp [bola_dir], 1    ; Si venía de derecha-abajo
+        je cambiar_a_dir0    ; Cambiar a izquierda-abajo
+        cmp [bola_dir], 3    ; Si venía de derecha-arriba
+        je cambiar_a_dir2    ; Cambiar a izquierda-arriba
+        jmp ajustar_posicion
+
+    cambiar_a_dir0:
+        mov [bola_dir], 0
+        jmp ajustar_posicion
+
+    cambiar_a_dir2:
+        mov [bola_dir], 2
+		jmp ajustar_posicion
+
+    ajustar_posicion:
+        ; Asegurar que la bola no se quede fuera de los límites
+        cmp [bola_col], lim_izquierdo
+        jg no_ajustar_izq
+        mov [bola_col], lim_izquierdo
+    no_ajustar_izq:
+        cmp [bola_col], lim_derecho
+        jl no_ajustar_der
+        mov [bola_col], lim_derecho
+    no_ajustar_der:
+        cmp [bola_ren], lim_superior
+        jg no_ajustar_sup
+        mov [bola_ren], lim_superior
+    no_ajustar_sup:
+        cmp [bola_ren], lim_inferior
+        jl no_ajustar_inf
+        mov [bola_ren], lim_inferior
+    no_ajustar_inf:
+        jmp dibujar_bola
+
+    col_superior:
+        ; Cambiar dirección al rebotar en techo
+        cmp [bola_dir], 2    ; Si venía de izquierda-arriba
+        je cambiar_a_dir0    ; Cambiar a izquierda-abajo
+        cmp [bola_dir], 3    ; Si venía de derecha-arriba
+        je cambiar_a_dir1    ; Cambiar a derecha-abajo
+        jmp ajustar_posicion
+
+    col_inferior:
+        ; Cambiar dirección al rebotar en suelo
+        cmp [bola_dir], 0    ; Si venía de izquierda-abajo
+        je cambiar_a_dir2    ; Cambiar a izquierda-arriba
+        cmp [bola_dir], 1    ; Si venía de derecha-abajo
+        je cambiar_a_dir3    ; Cambiar a derecha-arriba
+
+    dibujar_bola:
+        call IMPRIME_BOLA
+        mov ah, 00h 
+        int 1Ah 
+        mov [ticks], dx
+        ret
+endp
+
+
 
 end inicio; fin del programa
