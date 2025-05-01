@@ -69,7 +69,7 @@ bola_col		db 		ini_columna 	 	;columna de la bola
 bola_ren		db 		ini_renglon-1 		;renglón de la bola
 bola_pend 		db 		1 		;pendiente de desplazamiento de la bola
 bola_rap 		dw 		1		;rapidez de la bola ////modificada a 1, el original es 2
-bola_dir		db 		0 		;dirección de la bola. 0 izquierda-abajo, 1 derecha-abajo, 2 izquierda-arriba, 3 derecha-arriba
+bola_dir		db 		3 		;dirección de la bola. 0 izquierda-abajo, 1 derecha-abajo, 2 izquierda-arriba, 3 derecha-arriba
 bola_dir_x		db		2		;dirección en x de la bola 
 bola_dir_y		db		1		;dirección en y de la bola
 
@@ -307,6 +307,7 @@ MOVER_JUGADOR proc
 		;preparamos la lectura de teclado
 		mov ah, 00h
 		int 16h
+		jz fin_movimiento
 		;si leemos "a" el jugador se mueve a la izquierda
 		cmp al, "a"
 		je izquierda
@@ -406,6 +407,7 @@ MOVIMIENTO_BOLA proc
         jb delay
 
         call BORRA_BOLA
+		
 
         ; Movimiento según dirección actual
         cmp [bola_dir], 0   ; Izquierda abajo
@@ -435,8 +437,11 @@ MOVIMIENTO_BOLA proc
     direccion_3:
         inc [bola_col]      ; Mover derecha
         dec [bola_ren]      ; Mover arriba
+		jmp comprobar_colision
 
     comprobar_colision:
+		;Verificamos colision con la barra del jugador
+		mov al, [player_ren]
         ; Verificar colisiones laterales primero
         cmp [bola_col], lim_izquierdo
         jle col_lat_izq
@@ -446,8 +451,14 @@ MOVIMIENTO_BOLA proc
         ; Luego verificar colisiones verticales
         cmp [bola_ren], lim_superior
         jle col_superior
-        cmp [bola_ren], lim_inferior
-        jge col_inferior
+
+		;detectar si tocó al jugador para que rebote
+		call DETECTA_COLISION_JUGADOR
+        jc col_inferior			; si CF = 1 detectó al jugador
+		;detecta si se tocó el limite inferior para
+		;la logica de perder vida
+		cmp [bola_ren], lim_inferior
+		jge col_inferior
         jmp dibujar_bola     ; Si no hay colisiones
 
     col_lat_izq:
@@ -458,29 +469,44 @@ MOVIMIENTO_BOLA proc
         je cambiar_a_dir3    ; Cambiar a derecha-arriba
         jmp ajustar_posicion
 
-    cambiar_a_dir1:
-        mov [bola_dir], 1
-        jmp ajustar_posicion
-
-    cambiar_a_dir3:
-        mov [bola_dir], 3
-        jmp ajustar_posicion
-
-    col_lat_der:
+	col_lat_der:
         ; Cambiar dirección al rebotar en pared derecha
         cmp [bola_dir], 1    ; Si venía de derecha-abajo
         je cambiar_a_dir0    ; Cambiar a izquierda-abajo
         cmp [bola_dir], 3    ; Si venía de derecha-arriba
         je cambiar_a_dir2    ; Cambiar a izquierda-arriba
+        jmp ajustar_posicion  
+
+	col_superior:
+        ; Cambiar dirección al rebotar en techo
+        cmp [bola_dir], 2    ; Si venía de izquierda-arriba
+        je cambiar_a_dir0    ; Cambiar a izquierda-abajo
+        cmp [bola_dir], 3    ; Si venía de derecha-arriba
+        je cambiar_a_dir1    ; Cambiar a derecha-abajo
         jmp ajustar_posicion
 
-    cambiar_a_dir0:
+    col_inferior:
+        ; Cambiar dirección al rebotar en suelo
+        cmp [bola_dir], 0    ; Si venía de izquierda-abajo
+        je cambiar_a_dir2    ; Cambiar a izquierda-arriba
+        cmp [bola_dir], 1    ; Si venía de derecha-abajo
+        je cambiar_a_dir3    ; Cambiar a derecha-arriba
+
+	cambiar_a_dir0:
         mov [bola_dir], 0
         jmp ajustar_posicion
 
-    cambiar_a_dir2:
+    cambiar_a_dir1:
+        mov [bola_dir], 1
+        jmp ajustar_posicion
+
+	cambiar_a_dir2:
         mov [bola_dir], 2
 		jmp ajustar_posicion
+
+    cambiar_a_dir3:
+        mov [bola_dir], 3
+        jmp ajustar_posicion
 
     ajustar_posicion:
         ; Asegurar que la bola no se quede fuera de los límites
@@ -502,21 +528,6 @@ MOVIMIENTO_BOLA proc
     no_ajustar_inf:
         jmp dibujar_bola
 
-    col_superior:
-        ; Cambiar dirección al rebotar en techo
-        cmp [bola_dir], 2    ; Si venía de izquierda-arriba
-        je cambiar_a_dir0    ; Cambiar a izquierda-abajo
-        cmp [bola_dir], 3    ; Si venía de derecha-arriba
-        je cambiar_a_dir1    ; Cambiar a derecha-abajo
-        jmp ajustar_posicion
-
-    col_inferior:
-        ; Cambiar dirección al rebotar en suelo
-        cmp [bola_dir], 0    ; Si venía de izquierda-abajo
-        je cambiar_a_dir2    ; Cambiar a izquierda-arriba
-        cmp [bola_dir], 1    ; Si venía de derecha-abajo
-        je cambiar_a_dir3    ; Cambiar a derecha-arriba
-
     dibujar_bola:
         call IMPRIME_BOLA
         mov ah, 00h 
@@ -525,6 +536,56 @@ MOVIMIENTO_BOLA proc
         ret
 endp
 
+DETECTA_COLISION_JUGADOR proc
+		push ax
+		push bx
+		push cx 
+		push dx 
+
+
+		; Guardar posición original de la bola
+		mov dh, [bola_ren]
+		mov dl, [bola_col]
+		inc dh
+		
+		; Verificar posición debajo de la bola
+		;inc dh                 ; Mover temporalmente una fila abajo
+		
+		; Verificar los 3 puntos centrales del jugador (donde podría haber colisión)
+		;mov cx, 3                    ; Verificar 3 posiciones
+		;sub dl, 1                    ; Empezar una columna a la izquierda
+		
+	
+		;posicionar cursor
+		mov bh, 00h                  ; Página de video 0
+		mov ah, 02h                  ; Función para posicionar cursor
+		int 10h
+		
+		; Leer carácter y atributo en cursor
+		mov ah, 08h                  
+		int 10h
+		cmp ah, cBlanco              ; Comparar con color blanco
+		je colision_valida       	; Saltar si hay colisión
+		
+		jmp no_colision
+		
+		colision_valida:
+			cmp al, 223			;compara si tocó el caracter del jugador
+			jne no_colision     ;si no lo tocó no hay colisión   
+
+			stc					;CF = 1 porque hubo colision
+			jmp fin_deteccion
+
+		no_colision:
+			clc					;CF = 0 porque no hubo colisión
+		fin_deteccion:
+			pop dx
+			pop cx
+			pop bx
+			pop ax
+			ret
+
+endp
 
 
 end inicio; fin del programa
