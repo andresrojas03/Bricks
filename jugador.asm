@@ -861,11 +861,12 @@ CAMBIAR_NIVEL_BRICK proc
 		mov al, [col_aux]
 		xor ah, ah          ; AX = col_aux
 		mov bl, 5
-		div bl              ; AH = col_aux % 5 (posición relativa)
-		
-		; Calcular inicio del brick (col_aux - posición relativa)
-		sub [col_aux], ah
-		inc [col_aux]
+		dec al				;Ajuste porque columnas inician en 1
+		div bl              ;AX / BL -> = índice de ladrillo, AH = offset
+		mul bl				;AL = AL * 5 -> inicio relativo desde 0
+		inc al				;+1 para compensar la columna base (1)
+		mov [col_aux], al 	;[col_aux] = inicio del ladrillo colisionado
+
 		;Comparamos el color del brick para determinar el nivel de la colisión
 		cmp ch, cAzul		;colisión nivel 3 -> nivel 2
 		je nivel_2
