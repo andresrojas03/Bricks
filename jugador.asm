@@ -79,6 +79,28 @@ bola_dir		db 		3 		;dirección de la bola. 0 izquierda-abajo, 1 derecha-abajo, 2
 bola_dir_x		db		2		;dirección en x de la bola 
 bola_dir_y		db		1		;dirección en y de la bola
 
+;variables de puntaje
+player_score     dw     0       ; Puntaje actual
+player_hiscore   dw     0       ; Puntaje más alto
+
+;variables cadenas que se necesitan para mostrar e puntaje
+scoreStr        db     "SCORE"
+hiscoreStr      db     "HI-SCORE"
+blank           db     "     "
+
+;Constantes 
+;Scores
+hiscore_ren     equ    11
+hiscore_col     equ    lim_derecho+7
+score_ren       equ    13
+score_col       equ    lim_derecho+7
+
+;Constante para posicion de textos
+;Scores
+hiscore_ren     equ    11
+hiscore_col     equ    lim_derecho+7
+score_ren       equ    13
+score_col       equ    lim_derecho+7
 
 ;variables nuevas para las funciones agregadas
 toco_lim_izq 	db 		0
@@ -167,6 +189,10 @@ inicio:
 	call IMPRIME_BOLA
 	call IMPRIME_JUGADOR
 	
+	;Inicializacion de puntajes
+	call IMPRIME_TEXTOS  ; Para mostrar etiquetas de "SCORE" y "HI-SCORE"
+	call IMPRIME_SCORES  ; Para inicializar los puntajes a cero
+
 	;obtener ticks iniciales
 	mov ah, 00h 
 	int 1Ah		;	CX:DX = ticks iniciales
@@ -852,50 +878,178 @@ ES_UN_BRICK proc
 	endp
 ;Para disminuir el nivel del brick en caso de colisión
 CAMBIAR_NIVEL_BRICK proc
-		;Verificamos el nivel con el color guardado en el registro AH
-		mov [col_aux], dl 	;guardamos la columna donde fue la colisión
-		mov [ren_aux], dh	;guardamos el renglón donde fue la colisión
-		mov ch, ah 			;guardamos el color que se detectó
-		
-		; Calcular posición relativa dentro del brick (0-4)
-		mov al, [col_aux]
-		xor ah, ah          ; AX = col_aux
-		mov bl, 5
-		dec al				;Ajuste porque columnas inician en 1
-		div bl              ;AX / BL -> = índice de ladrillo, AH = offset
-		mul bl				;AL = AL * 5 -> inicio relativo desde 0
-		inc al				;+1 para compensar la columna base (1)
-		mov [col_aux], al 	;[col_aux] = inicio del ladrillo colisionado
+    ;Verificamos el nivel con el color guardado en el registro AH
+    mov [col_aux], dl   ;guardamos la columna donde fue la colisión
+    mov [ren_aux], dh   ;guardamos el renglón donde fue la colisión
+    mov ch, ah          ;guardamos el color que se detectó
+    
+    ; Calcular posición relativa dentro del brick (0-4)
+    mov al, [col_aux]
+    xor ah, ah          ; AX = col_aux
+    mov bl, 5
+    dec al              ;Ajuste porque columnas inician en 1
+    div bl              ;AX / BL -> = índice de ladrillo, AH = offset
+    mul bl              ;AL = AL * 5 -> inicio relativo desde 0
+    inc al              ;+1 para compensar la columna base (1)
+    mov [col_aux], al   ;[col_aux] = inicio del ladrillo colisionado
 
-		;Comparamos el color del brick para determinar el nivel de la colisión
-		cmp ch, cAzul		;colisión nivel 3 -> nivel 2
-		je nivel_2
-		
-		cmp ch, cVerde		;colisión nivel 2 -> nivel 1
-		je nivel_1
-		
-		cmp ch, cRojo		;colisión nivel 1 -> borrar Brick (pintar de negro)
-		je borra_brick
+    ;Comparamos el color del brick para determinar el nivel de la colisión
+    cmp ch, cAzul       ;colisión nivel 3 -> nivel 2
+    je nivel_2
+    
+    cmp ch, cVerde      ;colisión nivel 2 -> nivel 1
+    je nivel_1
+    
+    cmp ch, cRojo       ;colisión nivel 1 -> borrar Brick (pintar de negro)
+    je borra_brick
 
-		jmp fin_cambio
+    jmp fin_cambio
 
-		nivel_2:
-			mov [brick_color], cVerde
-			jmp imprimir_brick
+    nivel_2:
+        ; Incrementar puntaje por golpear un brick de nivel 3
+        add word ptr [player_score], 30
+        mov [brick_color], cVerde
+        jmp imprimir_brick
 
-		nivel_1:
-			mov [brick_color], cRojo
-			jmp imprimir_brick
+    nivel_1:
+        ; Incrementar puntaje por golpear un brick de nivel 2
+        add word ptr [player_score], 20
+        mov [brick_color], cRojo
+        jmp imprimir_brick
 
-		borra_brick:
-			mov [brick_color], cNegro
-			jmp imprimir_brick 
+    borra_brick:
+        ; Incrementar puntaje por golpear un brick de nivel 1
+        add word ptr [player_score], 10
+        mov [brick_color], cNegro
+        jmp imprimir_brick 
 
-		imprimir_brick:
-			call PRINT_BRICK		
+    imprimir_brick:
+        ; Guardar coordenadas actuales del brick
+        push ax
+        push bx
+        push cx
+        push dx
+        
+        ; Guardar valores de las variables en registros de 8 bits
+        mov cl, [col_aux]  ; Usar CL para guardar col_aux (8 bits)
+        mov ch, [ren_aux]  ; Usar CH para guardar ren_aux (8 bits)
+        
+        ; Imprimir el brick con el color correspondiente
+        call PRINT_BRICK
+        
+        ; Actualizar puntaje más alto si es necesario
+        call ACTUALIZA_HISCORE
+        ; Actualizar visualización de puntajes
+        call BORRA_SCORES
+        call IMPRIME_SCORES
+        
+        ; Restaurar coordenadas del brick
+        mov [col_aux], cl
+        mov [ren_aux], ch
+        
+        pop dx
+        pop cx
+        pop bx
+        pop ax
 
-		fin_cambio:
-			ret 
+    fin_cambio:
+        ret 
+endp
+	
+;Manejo del puntaje
+; Procedimiento para actualizar HI-SCORE si es necesario
+ACTUALIZA_HISCORE proc
+    mov ax, [player_score]
+    cmp ax, [player_hiscore]
+    jle fin_hiscore     ; Si score <= hiscore, no actualizamos
+    
+    ; Si score > hiscore, actualizamos el hiscore
+    mov [player_hiscore], ax
+    
+    fin_hiscore:
+        ret
+endp
 
-	endp
+; Procedimiento para mostrar textos "SCORE" y "HI-SCORE"
+IMPRIME_TEXTOS proc
+    ;Imprime cadena "SCORE"
+    posiciona_cursor score_ren, score_col
+    imprime_cadena_color scoreStr, 5, cGrisClaro, bgNegro
+
+    ;Imprime cadena "HI-SCORE"
+    posiciona_cursor hiscore_ren, hiscore_col
+    imprime_cadena_color hiscoreStr, 8, cGrisClaro, bgNegro
+    ret
+endp
+
+; Procedimiento para imprimir scores (tanto el actual como el hi-score)
+IMPRIME_SCORES proc
+    call IMPRIME_SCORE
+    call IMPRIME_HISCORE
+    ret
+endp
+
+; Procedimiento para imprimir el score actual
+IMPRIME_SCORE proc
+    mov [ren_aux], score_ren
+    mov [col_aux], score_col+20
+    mov bx, [player_score]
+    call IMPRIME_BX
+    ret
+endp
+
+; Procedimiento para imprimir el hi-score
+IMPRIME_HISCORE proc
+    mov [ren_aux], hiscore_ren
+    mov [col_aux], hiscore_col+20
+    mov bx, [player_hiscore]
+    call IMPRIME_BX
+    ret
+endp
+
+; Procedimiento para borrar los scores de la pantalla (para actualización)
+BORRA_SCORES proc
+    call BORRA_SCORE
+    call BORRA_HISCORE
+    ret
+endp
+
+; Procedimiento para borrar el score actual de pantalla
+BORRA_SCORE proc
+    posiciona_cursor score_ren, score_col+20
+    imprime_cadena_color blank, 5, cBlanco, bgNegro
+    ret
+endp
+
+; Procedimiento para borrar el hi-score de pantalla
+BORRA_HISCORE proc
+    posiciona_cursor hiscore_ren, hiscore_col+20
+    imprime_cadena_color blank, 5, cBlanco, bgNegro
+    ret
+endp
+
+; Procedimiento para imprimir un valor numérico (en BX) en pantalla
+IMPRIME_BX proc
+    mov ax, bx
+    mov cx, 5
+div10:
+    xor dx, dx
+    div [diez]
+    push dx
+    loop div10
+    mov cx, 5
+imprime_digito:
+    mov [conta], cl
+    posiciona_cursor [ren_aux], [col_aux]
+    pop dx
+    or dl, 30h
+    imprime_caracter_color dl, cBlanco, bgNegro
+    xor ch, ch
+    mov cl, [conta]
+    inc [col_aux]
+    loop imprime_digito
+    ret
+endp
+
+
 end inicio; fin del programa
