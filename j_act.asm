@@ -298,8 +298,7 @@ reinicio_detectado:
 	;bucle para quitar la pausa con p
 		mov ah, 00h 
 		int 16h
-		cmp al, 27
-		je salir
+		
 		cmp al, "p"
 		jne quitar_pausa
 	
@@ -326,7 +325,11 @@ tecla_presionada:
 	call MOVER_JUGADOR	
 	cmp end_game, 1				;comprobamos si se presionó la tecla esc
 	je salir					;si end_game == 1 => saltamos a la etiqueta salir
+	
 	call MOVIMIENTO_BOLA 
+	cmp [status], 1		;si hubo una pausa por perder una vida
+	je reinicio_detectado
+
 	jmp jugar
 
 salir: 
@@ -730,7 +733,7 @@ MOVER_JUGADOR proc
 ;lógica para que el jugador no salga de la zona de juego por la izquierda
 COMP_LIM_JUGADOR_IZQ proc
 		dec [player_col]	;realizamos un decremento para la comparación
-		cmp [player_col], lim_izquierdo + 1	;player_col < lim_izquierdo
+		cmp [player_col], lim_izquierdo + 2	;player_col < lim_izquierdo
 		
 		jl lim_izq_tocado
 		jmp lim_izq_no_tocado
@@ -748,7 +751,7 @@ COMP_LIM_JUGADOR_IZQ proc
 ;lógica para que el jugador no salga de la zona de juego por la derecha
 COMP_LIM_JUGADOR_DER proc
 		inc [player_col]	;realizamos un incremento para la comparación
-		cmp [player_col], lim_derecho - 1	;player_col > lim_derecho
+		cmp [player_col], lim_derecho - 2	;player_col > lim_derecho
 
 		jg lim_der_tocado
 		jmp lim_der_no_tocado 
