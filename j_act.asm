@@ -116,6 +116,7 @@ filehandle      dw      ?                  ; Manejador del archivo
 titulo 			db 		"BRICKS"
 scoreStr        db     "SCORE"
 hiscoreStr      db     "HI-SCORE"
+livesStr 		db		"LIVES"
 blank           db     "     "
 
 ;Variables para control de botones
@@ -282,9 +283,44 @@ jugar:
 	je jugar
 
 mover_bola:
-	
 	call MOVIMIENTO_BOLA 
+	cmp [status], 1		;si hubo una pausa por perder una vida
+	je reinicio_detectado
+	
 	jmp jugar	
+
+reinicio_detectado:
+	;preparamos la lectura de teclado para leer "p" y quitar la pausa
+	cmp [player_lives], 0	;si el reinicio fue por que no hay mas vidas
+	je no_mas_vidas
+	
+	quitar_pausa:
+	;bucle para quitar la pausa con p
+		mov ah, 00h 
+		int 16h
+		cmp al, 27
+		je salir
+		cmp al, "p"
+		jne quitar_pausa
+	
+		xor [status], 1
+		jmp jugar
+
+
+no_mas_vidas:
+	call REINICIAR_JUEGO
+	reiniciar_true:
+		mov ah, 00h
+		int 16h
+		cmp al, 27
+		je salir
+		cmp al, "r"
+		jne reiniciar_true
+		
+		mov [player_lives], 3
+		call IMPRIME_LIVES
+		xor [status], 1
+		jmp jugar
 
 tecla_presionada:
 	call MOVER_JUGADOR	
@@ -488,17 +524,35 @@ IMPRIME_LIVES proc
 	xor cx,cx
 	mov di,lives_col+20
 	mov cl,[player_lives]
-imprime_live:
-	push cx
-	mov ax,di
-	posiciona_cursor lives_ren,al
-	imprime_caracter_color 2d,cCyanClaro,bgNegro
-	add di,2
-	pop cx
-	loop imprime_live
-	ret
+	imprime_live:
+		push cx
+		mov ax,di
+		posiciona_cursor lives_ren,al
+		imprime_caracter_color 2d,cCyanClaro,bgNegro
+		add di,2
+		pop cx
+		loop imprime_live
+		ret
 endp
 
+BORRA_LIVES proc
+	xor cx,cx
+	mov di,lives_col+20
+	mov cl,[player_lives]
+	cmp cl, 0
+	je contador_cero
+	borra_live:
+		push cx
+		mov ax,di
+		posiciona_cursor lives_ren,al
+		imprime_caracter_color 20h,cNegro,bgNegro
+		add di,2
+		pop cx
+		loop borra_live
+		ret
+	contador_cero:
+		ret
+endp
 
 PRINT_TEXT proc
 		posiciona_cursor [ren_aux], [col_aux]
@@ -822,6 +876,10 @@ MOVIMIENTO_BOLA proc
 			jmp ajustar_posicion
 
 		col_inferior_escenario:
+			;Comprobamos si está tocando el fondo
+			mov cl, [lim_inferior]
+			cmp cl, [bola_ren]
+			je quitar_vida
 			; Cambiar dirección al rebotar en suelo
 			cmp [bola_dir], 0    ; Si venía de izquierda-abajo
 			je cambiar_a_dir2    ; Cambiar a izquierda-arriba
@@ -863,6 +921,29 @@ MOVIMIENTO_BOLA proc
 			mov [bola_ren], lim_inferior
 		no_ajustar_inf:
 			jmp dibujar_bola
+
+		quitar_vida:
+			call BORRA_LIVES
+			dec [player_lives]
+			;si no quedan vidas
+			cmp [player_lives], 0	
+			je no_vidas
+			;si aun quedan vidas
+			cmp [player_lives], 0
+			jne hay_vidas
+			
+
+		no_vidas:
+			mov [status], 1 	;detenemos el juego
+			ret
+
+		hay_vidas:
+			call REINICIAR_JUEGO
+			call IMPRIME_LIVES
+			;detenemos el juego después de perder una vida
+			xor [status], 1
+			mov ah, 00h
+			ret
 
 		dibujar_bola:
 			call IMPRIME_BOLA
@@ -906,6 +987,7 @@ DETECTA_COLISION_JUGADOR proc
 
 		no_colision_jugador:
 			clc					;CF = 0 porque no hubo colisión
+
 		fin_deteccion:
 			pop dx
 			pop cx
@@ -1010,18 +1092,10 @@ DETECTA_COLISION_BRICKS proc
 			
 			call ES_UN_BRICK
 			jc determinar_direccion_colision
-			; Verificar colores de brick
-			;cmp ah, cAzul
-			;je verificar_caracter_brick
-			;cmp ah, cVerde
-			;je verificar_caracter_brick
-			;cmp ah, cRojo
-			;je verificar_caracter_brick
 			
 			; Si no hubo colisión superior, verificar inferior
 			jmp verificar_inferior
 			
-
 		verificar_caracter_brick:
 			cmp al, 219d            ; Verificar caracter del brick
 			jne verificar_inferior  ; Si no es el caracter, verificar inferior
@@ -1044,22 +1118,10 @@ DETECTA_COLISION_BRICKS proc
 			int 10h
 			
 			call ES_UN_BRICK
-			jc determinar_direccion_colision
-			; Verificar colores de brick
-			;cmp ah, cAzul
-			;je verificar_caracter_brick_inf
-			;cmp ah, cVerde
-			;je verificar_caracter_brick_inf
-			;cmp ah, cRojo
-			;je verificar_caracter_brick_inf
+			jc determinar_direccion_colision		
 			
 			; Si no hubo colisión inferior pasamos a la verificación lateral
 			jmp verificar_izquierda
-
-		;verificar_caracter_brick_inf:
-		;	cmp al, 219d            ; Verificar caracter del brick
-		;	jne no_colision_bricks  ; Si no es el caracter, no hay colisión
-		;	jmp	determinar_direccion_colision 
 
 		verificar_derecha:
 			; Restaurar posición original y mover a la derecha
@@ -1250,6 +1312,10 @@ endp
 
 ;Procedimiento para reiniciar el juego
 REINICIAR_JUEGO proc
+	;Borramos la posicion de la bola y el jugador para evitar artefactos
+	;Al reiniciar el juego
+	call BORRA_JUGADOR
+	call BORRA_BOLA
 	; Restaurar posición inicial
 	mov [player_col], ini_columna
 	mov [player_ren], ini_renglon
@@ -1263,6 +1329,8 @@ REINICIAR_JUEGO proc
 	; Reiniciar bricks
 	call IMPRIME_BRICKS
 	
+	
+	
 	; Actualizar pantalla
 	call BORRA_BOLA
 	call IMPRIME_BOLA
@@ -1271,11 +1339,16 @@ REINICIAR_JUEGO proc
 	call BORRA_SCORES
 	call IMPRIME_SCORES
 	
+	
+
 	; Reiniciar estado del botón
 	mov [boton_reinicio], 0
 	
+	
+
 	ret
 endp
+
 
 ;Manejo del puntaje
 ; Procedimiento para actualizar HI-SCORE si es necesario
@@ -1294,6 +1367,10 @@ endp
 
 ; Procedimiento para mostrar textos "SCORE" y "HI-SCORE"
 IMPRIME_TEXTOS proc
+	;Imprime cadena "LIVES"
+	posiciona_cursor lives_ren,lives_col
+	imprime_cadena_color livesStr,5,cGrisClaro,bgNegro
+
     ;Imprime cadena "SCORE"
     posiciona_cursor score_ren, score_col
     imprime_cadena_color scoreStr, 5, cGrisClaro, bgNegro
