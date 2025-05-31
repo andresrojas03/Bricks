@@ -22,6 +22,7 @@ marcoHor 			equ 	205d 	;'═'
 marcoVer 			equ 	186d 	;'║'
 ;Atributos de color de BIOS
 ;Valores de color para carácter
+
 cNegro 			equ		00h
 cAzul 			equ		01h
 cVerde 			equ 	02h
@@ -205,6 +206,7 @@ inicializa_ds_es 	macro
 	mov es,ax 		;Este registro se va a usar, junto con BP, para imprimir cadenas utilizando interrupción 10h
 endm
 
+
 posiciona_cursor macro renglon,columna
 	mov dh,renglon	;dh = renglon
 	mov dl,columna	;dl = columna
@@ -249,6 +251,7 @@ inicio:
 	clear
 	oculta_cursor_teclado	;oculta cursor del mouse
 	apaga_cursor_parpadeo 	;Deshabilita parpadeo del cursor
+	 call INICIALIZA_MOUSE
 	call DIBUJA_UI
 	call CARGAR_HISCORE
 	call IMPRIME_HISCORE
@@ -1508,6 +1511,44 @@ CARGAR_HISCORE proc
 error_cargar:
     ; Si no existe el archivo, inicializar hi-score a 0
     mov [player_hiscore], 0
+    ret
+endp
+
+
+;/////////////////////////////////////////////////////////
+;//////// Inicialización y restricción del mouse//////////
+;/////////////////////////////////////////////////////////
+
+INICIALIZA_MOUSE proc
+    ; Inicializar mouse
+    mov ax, 0
+    int 33h
+    
+    ; Verificar si el mouse está instalado
+    cmp ax, 0FFFFh
+    jne no_mouse
+    
+    ; Mostrar puntero del mouse
+    mov ax, 1
+    int 33h
+    
+    ; Establecer límites horizontales (en píxeles)
+    ; Columna 31 = 31 * 8 = 248 píxeles
+    ; Columna 79 = 79 * 8 = 632 píxeles
+    mov ax, 7
+    mov cx, 248     ; Límite izquierdo (columna 31)
+    mov dx, 632     ; Límite derecho (columna 79)
+    int 33h
+    
+    ; Establecer límites verticales (en píxeles)
+    ; Renglón 0 = 0 * 8 = 0 píxeles
+    ; Renglón 24 = 24 * 8 = 192 píxeles
+    mov ax, 8
+    mov cx, 0       ; Límite superior (renglón 0)
+    mov dx, 192     ; Límite inferior (renglón 24)
+    int 33h
+    
+no_mouse:
     ret
 endp
 
