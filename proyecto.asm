@@ -847,22 +847,20 @@ MOVER_JUGADOR proc
 		cmp al, "d"
 		je derecha
 
-		call COMPROBAR_BOTON_PAUSE
-		cmp [boton_pausa], 1
-		je fin_movimiento
+		jmp fin_movimiento
+		;call COMPROBAR_BOTON_PAUSE
+		;cmp [boton_pausa], 1
+		;je fin_movimiento
 		;Botón P (Pausa)
 		;cmp al, "p"
 		;je pausar_juego
 		;Botón R (Reinicio)
 		;cmp al, "r"
 		;je reiniciar_game
-		;comprueba si se presionó la tecla esc, cambiar esto para que funcione
-		;con el botón cuando se implemente
+		;comprueba si se presionó la tecla esc
 		;cmp al, 1Bh
 		;je terminar_juego
 		;jmp fin_movimiento
-
-		
 
 		;Sección para pausar el juego
 		pausar_juego:
@@ -880,6 +878,7 @@ MOVER_JUGADOR proc
 			cmp toco_lim_izq, 1		;comprobar si se llegó al limite
 			je fin_movimiento
 
+			;actualizamos al jugador
 			call BORRA_JUGADOR
 			dec [player_col]
 			call IMPRIME_JUGADOR
@@ -892,6 +891,7 @@ MOVER_JUGADOR proc
 			cmp toco_lim_der, 1
 			je fin_movimiento
 
+			;actualizamos al jugador
 			call BORRA_JUGADOR
 			inc [player_col]
 			call IMPRIME_JUGADOR
@@ -956,7 +956,6 @@ COMP_LIM_JUGADOR_DER proc
 ;arriba se deben restar números y al revés
 
 MOVIMIENTO_BOLA proc
-
 		delay:
 			mov ah, 00h 
 			int 1Ah 
