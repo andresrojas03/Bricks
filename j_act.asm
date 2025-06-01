@@ -98,6 +98,13 @@ boton_columna 	db 		0
 boton_color		db 		0
 boton_bg_color	db 		0
 
+;Auxiliar para calculo de coordenadas del mouse
+ocho			db 		8
+;Cuando el driver del mouse no está disponible
+no_mouse		db 	'No se encuentra driver de mouse. Presione [enter] para salir$'
+
+
+
 ;Bola
 bola_col		db 		ini_columna 	 	;columna de la bola
 bola_ren		db 		ini_renglon-1 		;renglón de la bola
@@ -123,7 +130,7 @@ blank           db     "     "
 ;Variables para control de botones
 boton_pausa      db 0   ; 0=no presionado, 1=presionado
 boton_reinicio   db 0   ; 0=no presionado, 1=presionado
-
+boton_play		db	0	; 0 =no presionado, 1 = presionado
 ;Valores para la posición de los controles e indicadores dentro del juego
 ;Lives
 lives_col 		equ  	lim_derecho+7
@@ -175,6 +182,11 @@ end_game 		db 		0
 delay_ticks		dw 		3
 aux_mul			dw		0
 dir_colision	db 		0	; 0 No colision, 1 colision superior, 2 colision inferior, 3 colision izquierda, 4 colision derecha
+
+
+
+
+
 ;////////macros//////
 ;limpiar pantalla
 clear macro
@@ -215,6 +227,13 @@ posiciona_cursor macro renglon,columna
 	int 10h 		;interrupcion 10h y opcion 02h. Cambia posicion del cursor
 endm 
 
+;muestra_cursor_mouse - Establece la visibilidad del cursor del mouser
+muestra_cursor_mouse	macro
+	mov ax,1		;opcion 0001h
+	int 33h			;int 33h para manejo del mouse. Opcion AX=0001h
+					;Habilita la visibilidad del cursor del mouse en el programa
+endm
+
 imprime_caracter_color macro caracter,color,bg_color
 	mov ah,09h				;preparar AH para interrupcion, opcion 09h
 	mov al,caracter 		;AL = caracter a imprimir
@@ -240,6 +259,29 @@ imprime_cadena_color macro cadena,long_cadena,color,bg_color
 	int 10h 				;int 10h, AH=09h, imprime el caracter en AL con el color BL
 endm
 
+;lee_mouse - Revisa el estado del mouse
+;Devuelve:
+;;BX - estado de los botones
+;;;Si BX = 0000h, ningun boton presionado
+;;;Si BX = 0001h, boton izquierdo presionado
+;;;Si BX = 0002h, boton derecho presionado
+;;;Si BX = 0003h, boton izquierdo y derecho presionados
+; (400,120) => 80x25 =>Columna: 400 x 80 / 640 = 50; Renglon: (120 x 25 / 200) = 15 => 50,15
+;;CX - columna en la que se encuentra el mouse en resolucion 640x200 (columnas x renglones)
+;;DX - renglon en el que se encuentra el mouse en resolucion 640x200 (columnas x renglones)
+lee_mouse	macro
+	mov ax,0003h
+	int 33h
+endm
+
+;comprueba_mouse - Revisa si el driver del mouse existe
+comprueba_mouse 	macro
+	mov ax,0		;opcion 0
+	int 33h			;llama interrupcion 33h para manejo del mouse, devuelve un valor en AX
+					;Si AX = 0000h, no existe el driver. Si AX = FFFFh, existe driver
+endm
+
+
 ;//////////////////////////////
 ;////////MACROS AGREGADAS//////
 ;//////////////////////////////
@@ -249,90 +291,204 @@ endm
 inicio: 
     inicializa_ds_es
 	clear
+	comprueba_mouse		;macro para revisar driver de mouse
+	xor ax,0FFFFh		;compara el valor de AX con FFFFh, si el resultado es zero, entonces existe el driver de mouse
+	jz imprime_ui		;Si existe el driver del mouse, entonces salta a 'imprime_ui'
+	;Si no existe el driver del mouse entonces se muestra un mensaje
+	lea dx,[no_mouse]
+	mov ax,0900h	;opcion 9 para interrupcion 21h
+	int 21h			;interrupcion 21h. Imprime cadena.
+	jmp teclado		;salta a 'teclado'
+
+imprime_ui:
+	clear 					;limpia pantalla
 	oculta_cursor_teclado	;oculta cursor del mouse
 	apaga_cursor_parpadeo 	;Deshabilita parpadeo del cursor
-	 call INICIALIZA_MOUSE
-	call DIBUJA_UI
-	call CARGAR_HISCORE
-	call IMPRIME_HISCORE
-	call IMPRIME_BRICKS
-	call BORRA_BOLA
-	call IMPRIME_BOLA
-	call IMPRIME_JUGADOR
+	call DIBUJA_UI 			;procedimiento que dibuja marco de la interfaz
+	muestra_cursor_mouse 	;hace visible el cursor del mouse
 	
-	;Inicializacion de puntajes
-	call IMPRIME_TEXTOS  ; Para mostrar etiquetas de "SCORE" y "HI-SCORE"
-	call IMPRIME_SCORES  ; Para inicializar los puntajes a cero
+;En "mouse_no_clic" se revisa que el boton izquierdo del mouse no esté presionado
+;Si el botón está suelto, continúa a la sección "mouse"
+;si no, se mantiene indefinidamente en "mouse_no_clic" hasta que se suelte
+mouse_no_clic:
+	lee_mouse
+	test bx,0001h
+	jnz mouse_no_clic
+;Lee el mouse y avanza hasta que se haga clic en el boton izquierdo
+mouse:
+	lee_mouse
+conversion_mouse:
+	;Leer la posicion del mouse y hacer la conversion a resolucion
+	;80x25 (columnas x renglones) en modo texto
+	mov ax,dx 			;Copia DX en AX. DX es un valor entre 0 y 199 (renglon)
+	div [ocho] 			;Division de 8 bits
+						;divide el valor del renglon en resolucion 640x200 en donde se encuentra el mouse
+						;para obtener el valor correspondiente en resolucion 80x25
+	xor ah,ah 			;Descartar el residuo de la division anterior
+	mov dx,ax 			;Copia AX en DX. AX es un valor entre 0 y 24 (renglon)
+
+	mov ax,cx 			;Copia CX en AX. CX es un valor entre 0 y 639 (columna)
+	div [ocho] 			;Division de 8 bits
+						;divide el valor de la columna en resolucion 640x200 en donde se encuentra el mouse
+						;para obtener el valor correspondiente en resolucion 80x25
+	xor ah,ah 			;Descartar el residuo de la division anterior
+	mov cx,ax 			;Copia AX en CX. AX es un valor entre 0 y 79 (columna)
+
+	;Aquí se revisa si se hizo clic en el botón izquierdo
+	test bx,0001h 		;Para revisar si el boton izquierdo del mouse fue presionado
+	jz mouse 			;Si el boton izquierdo no fue presionado, vuelve a leer el estado del mouse
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;Aqui va la lógica de la posicion del mouse;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	;Si el mouse fue presionado en el renglon 0
+	;se va a revisar si fue dentro del boton [X]
+	cmp dx,0
+	je boton_x
+
+	;Si el mouse fue presionado en el renglon 19
+	;se va a revisar si fue el boton play o el stop
+	cmp dx, 19
+
+	jge mas_botones
+
+	jmp mouse_no_clic
+boton_x:
+	jmp boton_x1
+
+;Lógica para revisar si el mouse fue presionado en [X]
+;[X] se encuentra en renglon 0 y entre columnas 76 y 78
+boton_x1:
+	cmp cx,76
+	jge boton_x2
+	jmp mouse_no_clic
+boton_x2:
+	cmp cx,78
+	jbe boton_x3
+	jmp mouse_no_clic
+boton_x3:
+	;Se cumplieron todas las condiciones
+	jmp salir
+
+mas_botones:
+	cmp dx, 20
+	jbe mas_botones1
+	jmp mouse_no_clic
+
+mas_botones1:
+	call COMPROBAR_BOTON_PLAY
+	cmp [boton_play], 1
+	je jugar
+	call COMPROBAR_BOTON_STOP
+	cmp [boton_reinicio], 1
+	je reinicio_detectado
+	jmp mouse_no_clic
+
+;Si no se encontró el driver del mouse, muestra un mensaje y el usuario debe salir tecleando [enter]
+teclado:
+	mov ah,08h
+	int 21h
+	cmp al,0Dh		;compara la entrada de teclado si fue [enter]
+	jnz teclado 	;Sale del ciclo hasta que presiona la tecla [enter]
 
 	;obtener ticks iniciales
 	mov ah, 00h 
 	int 1Ah		;	CX:DX = ticks iniciales
 	mov ticks, dx 
 
+start_game:
+	cmp [boton_pausa], 1
+	jne no_hubo_pausa
+	jmp mouse
+
+no_hubo_pausa:
+	call REINICIAR_JUEGO
+	call IMPRIME_LIVES
+	jmp mouse
+
 ;"ciclo" para que salga hasta que se presione la tecla esc
 jugar:
+	mov [status], 1
+	mov [boton_play], 0
+	mov [boton_reinicio], 0
+	mov [boton_pausa], 0
+
+restart_game: 
 	; Verificar si se presionó botón reinicio
 	cmp [boton_reinicio], 1
 	jne no_reiniciar
-	call REINICIAR_JUEGO
-
-	no_reiniciar:
+	jmp reinicio_detectado
+	
+no_reiniciar:
 	;verificamos la entrada del jugador
 	mov ah, 01h					;función hay tecla disponible
 	int 16h 
-	jnz tecla_presionada		;si hay tecla, procesamos esa entrada 
+	jz no_tecla		;si no hay tecla, salta
 	
-	cmp [status], 1
-	je jugar
-
-mover_bola:
-	call MOVIMIENTO_BOLA 
-	cmp [status], 1		;si hubo una pausa por perder una vida
-	je reinicio_detectado
-	
-	jmp jugar	
-
-reinicio_detectado:
-	;preparamos la lectura de teclado para leer "p" y quitar la pausa
-	cmp [player_lives], 0	;si el reinicio fue por que no hay mas vidas
-	je no_mas_vidas
-	
-	quitar_pausa:
-	;bucle para quitar la pausa con p
-		mov ah, 00h 
-		int 16h
-		
-		cmp al, "p"
-		jne quitar_pausa
-	
-		xor [status], 1
-		jmp jugar
-
-
-no_mas_vidas:
-	call REINICIAR_JUEGO
-	reiniciar_true:
-		mov ah, 00h
-		int 16h
-		cmp al, 27
-		je salir
-		cmp al, "r"
-		jne reiniciar_true
-		
-		mov [player_lives], 3
-		call IMPRIME_LIVES
-		xor [status], 1
-		jmp jugar
+	;cmp [status], 1
+	;je jugar
 
 tecla_presionada:
 	call MOVER_JUGADOR	
 	cmp end_game, 1				;comprobamos si se presionó la tecla esc
 	je salir					;si end_game == 1 => saltamos a la etiqueta salir
-	
-	call MOVIMIENTO_BOLA 
-	cmp [status], 1		;si hubo una pausa por perder una vida
-	je reinicio_detectado
 
+no_tecla:
+	call MOVIMIENTO_BOLA 
+	cmp [boton_reinicio], 1		;si se acabaron las vidas
+	je reinicio_detectado
+	cmp [boton_pausa], 1		;si se perdió una vida
+	je pausa_detectada
+
+	call COMPROBAR_BOTON_PAUSE
+	cmp [boton_pausa], 1
+	je pausa_detectada
+
+	jmp jugar
+
+
+
+pausa_detectada:
+	
+	call IMPRIME_LIVES
+	cmp [player_lives], 3
+	jl perdio_vida
+
+	jmp start_game
+
+perdio_vida:
+	call REINICIAR_JUEGO
+	jmp start_game
+
+reinicio_detectado:
+	call REINICIAR_JUEGO
+	;reiniciar_true:	
+	;	mov ah, 00h
+	;	int 16h
+	;	cmp al, "r"
+	;	jne reiniciar_true
+	call BORRA_LIVES
+	mov [player_lives], 3
+	call IMPRIME_LIVES
+	mov [status], 0
+	call VACIAR_BUFFER_TECLADO
+	jmp start_game
+
+;tecla_presionada:
+;
+;	call MOVER_JUGADOR	
+;	cmp end_game, 1				;comprobamos si se presionó la tecla esc
+;	je salir					;si end_game == 1 => saltamos a la etiqueta salir
+;
+;	call MOVIMIENTO_BOLA 
+;	cmp [boton_reinicio], 1		;si se acabaron las vidas
+;	je reinicio_detectado
+;	cmp [boton_pausa], 1		;si se perdió una vida
+;	je pausa_detectada
+;
+;	
+;
+;
 	jmp jugar
 
 salir: 
@@ -449,6 +605,19 @@ DIBUJA_UI proc
 		call IMPRIME_SCORES
 
 		call IMPRIME_LIVES
+		
+		call INICIALIZA_MOUSE
+
+		call CARGAR_HISCORE
+
+		call IMPRIME_HISCORE
+		
+		call BORRA_BOLA
+
+		call IMPRIME_BOLA
+
+		call IMPRIME_JUGADOR
+
 
 		ret
 	endp
@@ -523,7 +692,6 @@ DATOS_INICIALES proc
 	mov [player_lives], 3
 	ret
 endp
-
 
 ;Imprime los caracteres ☻ que representan vidas. Inicialmente se imprime el número de 'player_lives'
 IMPRIME_LIVES proc
@@ -676,17 +844,21 @@ MOVER_JUGADOR proc
 		;si leemos "d" el jugador se mueve a la derecha
 		cmp al, "d"
 		je derecha
+
+		call COMPROBAR_BOTON_PAUSE
+		cmp [boton_pausa], 1
+		je fin_movimiento
 		;Botón P (Pausa)
-		cmp al, "p"
-		je pausar_juego
+		;cmp al, "p"
+		;je pausar_juego
 		;Botón R (Reinicio)
-		cmp al, "r"
-		je reiniciar_game
+		;cmp al, "r"
+		;je reiniciar_game
 		;comprueba si se presionó la tecla esc, cambiar esto para que funcione
 		;con el botón cuando se implemente
-		cmp al, 1Bh
-		je terminar_juego
-		jmp fin_movimiento
+		;cmp al, 1Bh
+		;je terminar_juego
+		;jmp fin_movimiento
 
 		
 
@@ -782,6 +954,7 @@ COMP_LIM_JUGADOR_DER proc
 ;arriba se deben restar números y al revés
 
 MOVIMIENTO_BOLA proc
+
 		delay:
 			mov ah, 00h 
 			int 1Ah 
@@ -931,23 +1104,22 @@ MOVIMIENTO_BOLA proc
 		quitar_vida:
 			call BORRA_LIVES
 			dec [player_lives]
+			;mov [status], 1
 			;si no quedan vidas
 			cmp [player_lives], 0	
 			je no_vidas
 			;si aun quedan vidas
 			cmp [player_lives], 0
-			jne hay_vidas
+			ja hay_vidas
 			
 
 		no_vidas:
-			mov [status], 1 	;detenemos el juego
+			mov [boton_reinicio], 1 	;detenemos el juego
+			mov ah, 00h
 			ret
 
 		hay_vidas:
-			call REINICIAR_JUEGO
-			call IMPRIME_LIVES
-			;detenemos el juego después de perder una vida
-			xor [status], 1
+			mov [boton_pausa], 1 	;ponemos una pausa condicional despues de perder una vida
 			mov ah, 00h
 			ret
 
@@ -1437,23 +1609,23 @@ endp
 IMPRIME_BX proc
     mov ax, bx
     mov cx, 5
-div10:
-    xor dx, dx
-    div [diez]
-    push dx
-    loop div10
-    mov cx, 5
-imprime_digito:
-    mov [conta], cl
-    posiciona_cursor [ren_aux], [col_aux]
-    pop dx
-    or dl, 30h
-    imprime_caracter_color dl, cBlanco, bgNegro
-    xor ch, ch
-    mov cl, [conta]
-    inc [col_aux]
-    loop imprime_digito
-    ret
+	div10:
+		xor dx, dx
+		div [diez]
+		push dx
+		loop div10
+		mov cx, 5
+	imprime_digito:
+		mov [conta], cl
+		posiciona_cursor [ren_aux], [col_aux]
+		pop dx
+		or dl, 30h
+		imprime_caracter_color dl, cBlanco, bgNegro
+		xor ch, ch
+		mov cl, [conta]
+		inc [col_aux]
+		loop imprime_digito
+		ret
 endp
 
 ;--- Procedimientos para guardar/cargar hi-score ---
@@ -1480,9 +1652,9 @@ GUARDAR_HISCORE proc
     int 21h
     ret
 
-error_guardar:
-    ; Opcional: Mostrar mensaje de error
-    ret
+	error_guardar:
+		; Opcional: Mostrar mensaje de error
+		ret
 endp
 
 CARGAR_HISCORE proc
@@ -1508,10 +1680,10 @@ CARGAR_HISCORE proc
     int 21h
     ret
 
-error_cargar:
-    ; Si no existe el archivo, inicializar hi-score a 0
-    mov [player_hiscore], 0
-    ret
+	error_cargar:
+		; Si no existe el archivo, inicializar hi-score a 0
+		mov [player_hiscore], 0
+		ret
 endp
 
 
@@ -1521,21 +1693,17 @@ endp
 
 INICIALIZA_MOUSE proc
     ; Inicializar mouse
-    mov ax, 0
-    int 33h
-    
+	lee_mouse
     ; Verificar si el mouse está instalado
-    cmp ax, 0FFFFh
-    jne no_mouse
+    comprueba_mouse
     
     ; Mostrar puntero del mouse
-    mov ax, 1
-    int 33h
+	muestra_cursor_mouse
     
     ; Establecer límites horizontales (en píxeles)
     ; Columna 31 = 31 * 8 = 248 píxeles
     ; Columna 79 = 79 * 8 = 632 píxeles
-    mov ax, 7
+   	mov ax, 7
     mov cx, 248     ; Límite izquierdo (columna 31)
     mov dx, 632     ; Límite derecho (columna 79)
     int 33h
@@ -1547,19 +1715,201 @@ INICIALIZA_MOUSE proc
     mov cx, 0       ; Límite superior (renglón 0)
     mov dx, 192     ; Límite inferior (renglón 24)
     int 33h
-    
-no_mouse:
-    ret
-endp
+
+endp 
 
 ;////////////////////////////////////////////////////////
 ;///////Procedimientos para manejar los botones//////////
 ;////////////////////////////////////////////////////////
 
+COMPROBAR_BOTON_STOP proc
+	mouse_no_clic_stop:
+		lee_mouse
+		test bx,0001h
+		jnz mouse_no_clic_stop
+
+	mouse_stop:
+		lee_mouse
+
+	conversion_mouse_stop:
+		mov ax,dx 			
+		div [ocho] 			
+		xor ah,ah 			
+		mov dx,ax 			
+		mov ax,cx 			
+		div [ocho] 			
+
+		xor ah,ah 			
+		mov cx,ax 			
+
+		;Aquí se revisa si se hizo clic en el botón izquierdo
+		test bx,0001h 		
+		jz mouse_stop	
+
+	;El boton stop [■] está contenido en los renglones 43 y 47, y en las columnas 18 y 20
+	cmp dx, 44
+	jge comprueba_columna_stop
+
+	comprueba_columna_stop:
+		cmp cx, 19
+		jge limite_izquierdo_stop
+
+	jmp mouse_no_clic_stop
+
+	
+	limite_izquierdo_stop:
+		cmp cx, stop_izq
+		jge limite_derecho_stop
+		ret
+	limite_derecho_stop:
+		cmp cx, stop_der
+		jbe limite_sup_stop
+		ret
+	limite_sup_stop:
+		cmp dx, stop_sup
+		jge limite_inf_stop
+		ret
+	limite_inf_stop:
+		cmp dx, stop_inf
+		jbe boton_stop_detectado
+		ret
+	boton_stop_detectado:
+		mov [boton_reinicio], 1
+		ret
+endp
+
+COMPROBAR_BOTON_PAUSE proc
+
+	mouse_no_clic_pause:
+		lee_mouse
+		test bx,0001h
+		jz fin_comprobar_pause
+
+	mouse_pause:
+		lee_mouse
+
+	conversion_mouse_pause:
+		mov ax,dx 			
+		div [ocho] 			
+		xor ah,ah 			
+		mov dx,ax 			
+		mov ax,cx 			
+		div [ocho] 			
+
+		xor ah,ah 			
+		mov cx,ax 			
+
+		;Aquí se revisa si se hizo clic en el botón izquierdo
+		test bx,0001h 		
+		jz mouse_pause	
+
+	;El boton pausa ["!!"] está contenido en los renglones 53 y 57, y en las columnas 18 y 20
+	cmp dx, 54
+	jge comprueba_columna_pause
+
+	comprueba_columna_pause:
+		cmp cx, 19
+		jge limite_izquierdo_pause
+
+		jmp mouse_no_clic_pause
+	
+	limite_izquierdo_pause:
+		cmp cx, pause_izq
+		jge limite_derecho_pause
+		ret
+	limite_derecho_pause:
+		cmp cx, pause_der
+		jbe limite_sup_pause
+		ret
+	limite_sup_pause:
+		cmp dx, pause_sup
+		jge limite_inf_pause
+		ret
+	limite_inf_pause:
+		cmp dx, pause_inf
+		jbe boton_pause_detectado
+		ret
+	boton_pause_detectado:
+		mov [boton_pausa], 1
+		mov [boton_play], 0
+	
+	fin_comprobar_pause:
+		ret
+endp
+
+COMPROBAR_BOTON_PLAY proc
+	mouse_no_clic_play:
+		lee_mouse
+		test bx,0001h
+		jnz mouse_no_clic_play
+
+	mouse_play:
+		lee_mouse
+
+	conversion_mouse_play:
+		mov ax,dx 			
+		div [ocho] 			
+		xor ah,ah 			
+		mov dx,ax 			
+		mov ax,cx 			
+		div [ocho] 			
+
+		xor ah,ah 			
+		mov cx,ax 			
+
+		;Aquí se revisa si se hizo clic en el botón izquierdo
+		test bx,0001h 		
+		jz mouse_play	
+
+	;El boton play [►] está contenido en los renglones 63 y 67, y en las columnas 18 y 20
+	cmp dx, 64
+	jge comprueba_columna_play
+
+	comprueba_columna_play:
+		cmp cx, 19
+		jge limite_izquierdo_play
+
+		jmp mouse_no_clic_play
+	
+	limite_izquierdo_play:
+		cmp cx, play_izq
+		jge limite_derecho_play
+		ret
+	limite_derecho_play:
+		cmp cx, play_der
+		jbe limite_sup_play
+		ret
+	limite_sup_play:
+		cmp dx, play_sup
+		jge limite_inf_play
+		ret
+		limite_inf_play:
+		cmp dx, play_inf
+		jbe boton_play_detectado
+		ret
+	boton_play_detectado:
+		mov [status], 1
+		mov [boton_play], 1
+		mov [boton_pausa], 0
+		call VACIAR_BUFFER_TECLADO
+		ret
+endp
 
 
+VACIAR_BUFFER_TECLADO proc
+	vaciar_b_tec:
+		mov ah, 0001h
+		int 16h
+		jz fin_vaciar_b_tec
 
+		mov ah, 00h
+		int 16h
+		jmp vaciar_b_tec
+	
+	fin_vaciar_b_tec:
+		ret
 
+endp
 
 
 
