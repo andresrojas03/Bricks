@@ -435,9 +435,9 @@ tecla_presionada:
 
 no_tecla:
 	call MOVIMIENTO_BOLA 
-	cmp [boton_reinicio], 1		;si se acabaron las vidas
+	cmp [status], 0		;si se acabaron las vidas
 	je reinicio_detectado
-	cmp [boton_pausa], 1		;si se perdió una vida
+	cmp [status], 2		;si se perdió una vida
 	je pausa_detectada
 
 	call COMPROBAR_BOTON_PAUSE
@@ -449,11 +449,13 @@ no_tecla:
 
 
 pausa_detectada:
-	
 	call IMPRIME_LIVES
-	cmp [player_lives], 3
-	jl perdio_vida
+	cmp [boton_pausa], 1
+	je pause_presionado
+	cmp [status], 2
+	je perdio_vida
 
+pause_presionado:
 	jmp start_game
 
 perdio_vida:
@@ -470,7 +472,7 @@ reinicio_detectado:
 	call BORRA_LIVES
 	mov [player_lives], 3
 	call IMPRIME_LIVES
-	mov [status], 0
+	;mov [status], 0
 	call VACIAR_BUFFER_TECLADO
 	jmp start_game
 
@@ -489,7 +491,7 @@ reinicio_detectado:
 ;	
 ;
 ;
-	jmp jugar
+	;jmp jugar
 
 salir: 
 	CALL GUARDAR_HISCORE
@@ -1114,12 +1116,14 @@ MOVIMIENTO_BOLA proc
 			
 
 		no_vidas:
-			mov [boton_reinicio], 1 	;detenemos el juego
+			;mov [boton_reinicio], 1 	;detenemos el juego
+			mov [status], 0				
 			mov ah, 00h
 			ret
 
 		hay_vidas:
-			mov [boton_pausa], 1 	;ponemos una pausa condicional despues de perder una vida
+			;mov [boton_pausa], 1 	;ponemos una pausa condicional despues de perder una vida
+			mov [status], 2
 			mov ah, 00h
 			ret
 
